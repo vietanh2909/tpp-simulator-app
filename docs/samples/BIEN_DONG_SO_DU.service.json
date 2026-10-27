@@ -1,0 +1,14 @@
+{
+  "serviceCode": "BIEN_DONG_SO_DU",
+  "name": "Biến động số dư",
+  "description": "Dịch vụ mẫu: không xác thực, thời gian Unix mili giây, trả 202",
+  "enabled": true,
+  "authType": "NONE",
+  "transactionIdPath": "$.trnId",
+  "statusPath": "$.stage",
+  "timestampPath": "$.dateTime",
+  "timestampFormat": "UNIX_MILLIS",
+  "defaultTimeZone": "Asia/Ho_Chi_Minh",
+  "responseHttpStatus": 202,
+  "responseBody": { "received": true }
+}

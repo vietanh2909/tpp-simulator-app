@@ -1,0 +1,17 @@
+{
+  "serviceCode": "CHI_HO",
+  "name": "Chi hộ",
+  "description": "Dịch vụ mẫu: khóa API (khóa giả công khai, chỉ để thử), thời gian theo mẫu",
+  "enabled": true,
+  "authType": "API_KEY",
+  "apiKeyHeaderName": "X-Api-Key",
+  "apiKeySecret": "sample-key-chi-ho",
+  "transactionIdPath": "$.processId",
+  "statusPath": "$.status",
+  "timestampPath": "$.date",
+  "timestampFormat": "PATTERN",
+  "timestampPattern": "yyyy-MM-dd HH:mm:ss",
+  "defaultTimeZone": "Asia/Ho_Chi_Minh",
+  "responseHttpStatus": 200,
+  "responseBody": { "status": "OK" }
+}

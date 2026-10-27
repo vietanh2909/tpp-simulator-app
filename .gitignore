@@ -1,0 +1,36 @@
+# Maven
+target/
+.mvn/wrapper/maven-wrapper.jar
+dependency-reduced-pom.xml
+
+# Java
+*.class
+*.log
+hs_err_pid*
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+nbproject/
+nbbuild/
+nbdist/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Môi trường cục bộ
+.env
+application-local.yml
+application-local.properties

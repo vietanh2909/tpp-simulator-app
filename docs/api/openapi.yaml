@@ -1,0 +1,692 @@
+openapi: 3.0.3
+info:
+  title: TPP Callback Simulator - Backend API
+  version: "1.0"
+  description: |
+    Hợp đồng HTTP của backend (`tpp-simulator-app`), dựng từ các khối C1 đến C4 của `contract-summary.md`
+    (bản đã sửa sau rà soát) và là bản nguồn của backend kể từ U1. Mỗi đường dẫn có `x-unit`: đơn vị đã
+    triển khai nó (`U1` ở bản skeleton, `U2` ở lõi backend). Từ U2 mọi đường dẫn dưới đây đều đã triển khai.
+
+    Quy ước chung:
+
+    - Thân yêu cầu và phản hồi là `application/json; charset=utf-8`, tên trường camelCase, enum viết hoa.
+    - Mọi thời điểm là ISO 8601 UTC dạng `2026-10-19T03:00:00Z` (có thể có phần giây thập phân).
+    - Mọi response lỗi do chính ứng dụng sinh ra có header `X-Simulator-Error` với giá trị bằng trường `error`
+      của thân. Response đã cấu hình của dịch vụ (C1) KHÔNG BAO GIỜ có header này, kể cả khi mã HTTP trùng một mã lỗi.
+    - `serviceCode` trong đường dẫn và tham số truy vấn được khớp không phân biệt hoa thường; mọi phản hồi trả
+      `serviceCode` đúng chữ gốc lúc tạo.
+    - Không xác thực (theo brief). Backend mặc định chỉ lắng nghe `127.0.0.1`.
+    - Không đặt phiên bản trong đường dẫn. Thay đổi thêm là tương thích; phía nhận bỏ qua trường lạ.
+
+    Bảng mã lỗi (`error`):
+
+    | Mã | HTTP | Dùng ở |
+    |---|---|---|
+    | `VALIDATION_FAILED` | 400 | C2, C3, C4 (kèm `fieldErrors`) |
+    | `UNSUPPORTED_CONTENT_TYPE`, `INVALID_JSON` | 400 | C1 |
+    | `UNAUTHORIZED` | 401 | C1 (hiệu lực từ U2): dịch vụ `API_KEY` thiếu hoặc sai khóa |
+    | `SERVICE_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `CALLBACK_NOT_FOUND` | 404 | C1, C2, C4 |
+    | `NOT_FOUND` | 404 | Đường dẫn không tồn tại (kể cả endpoint Actuator không mở) |
+    | `METHOD_NOT_ALLOWED` | 405 | Phương thức HTTP không được hỗ trợ cho đường dẫn |
+    | `SERVICE_CODE_DUPLICATE` | 409 | C2 |
+    | `PAYLOAD_TOO_LARGE` | 413 | C1 |
+    | `UNSUPPORTED_MEDIA_TYPE` | 415 | C2, C3 (Content-Type của yêu cầu quản lý hoặc thử mapping không phải JSON) |
+    | `INTERNAL_ERROR` | 500 | C1 đến C4 |
+    | `SERVICE_DISABLED` | 503 | C1 |
+
+    Header phụ `X-Simulator-Record-Failed: true` chỉ có trên response từ chối 400, 401, 404 (dịch vụ đã xóa) và
+    503 của `POST /callbacks/{serviceCode}` khi lần nhận bị từ chối không ghi được. Không có trên response đã
+    cấu hình, 413, 404 của mã chưa từng có hay 500 của callback được chấp nhận.
+
+    Nhật ký thay đổi:
+
+    - 2026-10-22 (U2, Code Generation): tất cả thay đổi tương thích (thêm, không đổi nghĩa thứ đã có). `UNAUTHORIZED`
+      (401) hiệu lực cho dịch vụ `API_KEY`; thêm header `X-Simulator-Record-Failed` cho các response từ chối của
+      `POST /callbacks/{serviceCode}`; lần nhận bị từ chối được lưu thành Callback `REJECTED` (payload ở `payloadJson`
+      hoặc `payloadRawText`); triển khai `GET /api/services`, `PUT` và `DELETE /api/services/{serviceCode}`,
+      `PUT .../enabled`, `POST /api/mapping-tests`, `GET /api/callbacks`, `GET /api/callbacks/{recordId}`; bỏ ràng buộc
+      "chỉ NONE / ISO_8601" và việc từ chối tham số lọc của `GET /api/transactions`; thêm ràng buộc đường dẫn mapping,
+      tên header và khóa API, mẫu `PATTERN`; bổ sung các phản hồi 400, 415 và 500 còn thiếu (kể cả 500 cho
+      `GET /api/services` và `GET /api/callbacks/{recordId}`) và `maxLength` của `sampleJson`.
+    - 2026-10-20 (U1, Code Generation): tạo từ `contract-summary.md` đã sửa theo R-01 đến R-12 (chi tiết giao dịch
+      dùng tham số truy vấn; header `X-Simulator-Error`; `Service` không có `apiKeySecret`; bảng mã lỗi thống nhất;
+      khớp mã dịch vụ không phân biệt hoa thường). Bổ sung ba mã lỗi mức container (`NOT_FOUND`,
+      `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`) để mọi lỗi đều đúng dạng `ErrorResponse`. U1 từ chối
+      `authType` khác `NONE` và `timestampFormat` khác `ISO_8601` bằng 400 `VALIDATION_FAILED`, và từ chối mọi tham
+      số lọc của `GET /api/transactions` bằng 400 `VALIDATION_FAILED` cho tới khi U2 làm.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Mặc định chỉ lắng nghe loopback (đổi bằng biến môi trường SERVER_ADDRESS)
+tags:
+  - name: Callback
+    description: C1 - nhận callback từ hệ thống ngân hàng
+  - name: Services
+    description: C2 - quản lý dịch vụ
+  - name: MappingTest
+    description: C3 - thử mapping (U2)
+  - name: Query
+    description: C4 - tra cứu giao dịch và callback
+  - name: Operations
+    description: Điểm kiểm tra sức khỏe
+paths:
+  /callbacks/{serviceCode}:
+    post:
+      tags: [Callback]
+      operationId: receiveCallback
+      x-unit: U1
+      summary: Nhận callback từ hệ thống ngân hàng
+      description: |
+        Thứ tự kiểm tra cố định, dừng ở lỗi đầu tiên: body lớn hơn 1.048.576 byte thì 413 (không đọc hết body, không
+        ghi); mã dịch vụ chưa từng có thì 404 (không ghi); dịch vụ đã xóa thì 404 (ghi lý do `SERVICE_DELETED`);
+        dịch vụ tắt thì 503 (`SERVICE_DISABLED`); dịch vụ `API_KEY` thiếu hoặc sai khóa thì 401 `UNAUTHORIZED`
+        (`MISSING_API_KEY`, `INVALID_API_KEY`; tên header so không phân biệt hoa thường, giá trị phân biệt hoa thường,
+        header lặp lại là sai); Content-Type không phải `application/json` (bỏ tham số, không phân biệt hoa thường)
+        thì 400 `UNSUPPORTED_CONTENT_TYPE`; JSON rỗng, hỏng hoặc UTF-8 hỏng thì 400 `INVALID_JSON`; còn lại ánh xạ,
+        ghi Callback và Transaction trong MỘT giao dịch cơ sở dữ liệu rồi trả response đã cấu hình (kể cả khi mapping
+        lỗi). Lỗi ghi callback được chấp nhận thì 500 `INTERNAL_ERROR`, không trả response đã cấu hình.
+
+        Mọi lần từ chối của một dịch vụ có thật (trừ 413) được ghi thành Callback `REJECTED`, không vào giao dịch nào.
+        Nếu lần từ chối không ghi được, response vẫn mang mã từ chối gốc kèm header `X-Simulator-Record-Failed: true`.
+      parameters:
+        - name: serviceCode
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 50, pattern: "^[A-Za-z0-9_-]+$"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: Bất kỳ giá trị JSON hợp lệ nào, tối đa 1.048.576 byte
+      responses:
+        default:
+          description: |
+            Response đã cấu hình của dịch vụ: HTTP status 200 đến 599 (trừ 204, 205, 304) và body JSON cố định.
+            Trả cả khi mapping lỗi. KHÔNG có header `X-Simulator-Error`.
+          content:
+            application/json:
+              schema:
+                description: Nội dung do người dùng cấu hình
+        "400": {$ref: "#/components/responses/CallbackBadRequest"}
+        "401":
+          description: Khóa API sai hoặc thiếu (UNAUTHORIZED); cùng một thông báo cho thiếu và sai
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+            X-Simulator-Record-Failed: {$ref: "#/components/headers/XSimulatorRecordFailed"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "404":
+          description: Không có dịch vụ với mã này (chưa từng có, không ghi) hoặc dịch vụ đã xóa (SERVICE_NOT_FOUND, có ghi)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+            X-Simulator-Record-Failed: {$ref: "#/components/headers/XSimulatorRecordFailed"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "413":
+          description: Body lớn hơn 1.048.576 byte (PAYLOAD_TOO_LARGE); không ghi
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "503":
+          description: Dịch vụ đang tắt (SERVICE_DISABLED)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+            X-Simulator-Record-Failed: {$ref: "#/components/headers/XSimulatorRecordFailed"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+  /api/services:
+    get:
+      tags: [Services]
+      operationId: listServices
+      x-unit: U2
+      summary: Danh sách dịch vụ
+      parameters:
+        - name: includeDeleted
+          in: query
+          schema: {type: boolean, default: false}
+          description: true để kèm dịch vụ đã xóa (phục vụ bộ lọc theo dõi); giá trị rỗng coi như false, giá trị khác true/false thì 400
+      responses:
+        "200":
+          description: Danh sách dịch vụ, sắp theo serviceCode tăng dần không phân biệt hoa thường
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Service"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "500": {$ref: "#/components/responses/InternalError"}
+    post:
+      tags: [Services]
+      operationId: createService
+      x-unit: U1
+      summary: Tạo dịch vụ
+      description: |
+        Thu thập MỌI lỗi trường cùng lúc. Hỗ trợ `authType` NONE và API_KEY, bốn định dạng `timestampFormat`;
+        `responseHttpStatus` không nhận 204, 205, 304. Thân JSON hỏng hoặc sai kiểu cũng là 400
+        `VALIDATION_FAILED`, không bao giờ 500. Service và phiên bản cấu hình số 1 được ghi trong một giao dịch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServiceCreate"}
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Service"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "409":
+          description: Mã dịch vụ trùng (SERVICE_CODE_DUPLICATE; không phân biệt hoa thường, kể cả đã xóa)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "415":
+          description: Content-Type của yêu cầu không phải JSON (UNSUPPORTED_MEDIA_TYPE)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/services/{serviceCode}:
+    parameters:
+      - name: serviceCode
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [Services]
+      operationId: getService
+      x-unit: U1
+      summary: Đọc một dịch vụ (khớp không phân biệt hoa thường)
+      responses:
+        "200":
+          description: Dịch vụ (kể cả đã xóa; trường deleted cho biết)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Service"}
+        "404": {$ref: "#/components/responses/ServiceNotFound"}
+        "500": {$ref: "#/components/responses/InternalError"}
+    put:
+      tags: [Services]
+      operationId: updateService
+      x-unit: U2
+      summary: Sửa cấu hình (serviceCode không đổi)
+      description: |
+        Sửa cấu hình tạo phiên bản mới khi có thay đổi thật; gửi lại đúng cấu hình cũ thì không tạo phiên bản.
+        Gửi `apiKeySecret` mới được tính là thay đổi (không so sánh được với khóa đã lưu). Thao tác khóa dòng dịch
+        vụ nên các yêu cầu sửa, bật/tắt, xóa đồng thời được xếp hàng tuần tự.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServiceUpdate"}
+      responses:
+        "200":
+          description: Đã sửa
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Service"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "404": {$ref: "#/components/responses/ServiceNotFound"}
+        "415":
+          description: Content-Type của yêu cầu không phải JSON (UNSUPPORTED_MEDIA_TYPE)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+    delete:
+      tags: [Services]
+      operationId: deleteService
+      x-unit: U2
+      summary: Xóa mềm
+      description: Đánh dấu đã xóa, giữ nguyên lịch sử callback; mã dịch vụ không dùng lại được.
+      responses:
+        "204": {description: Đã xóa mềm}
+        "404": {$ref: "#/components/responses/ServiceNotFound"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/services/{serviceCode}/enabled:
+    put:
+      tags: [Services]
+      operationId: setServiceEnabled
+      x-unit: U2
+      summary: Bật hoặc tắt dịch vụ
+      parameters:
+        - name: serviceCode
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        "200":
+          description: Đã đổi trạng thái
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Service"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "404": {$ref: "#/components/responses/ServiceNotFound"}
+        "415":
+          description: Content-Type của yêu cầu không phải JSON (UNSUPPORTED_MEDIA_TYPE)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/mapping-tests:
+    post:
+      tags: [MappingTest]
+      operationId: testMapping
+      x-unit: U2
+      summary: Thử mapping
+      description: |
+        Nhận cấu hình đang nhập (có thể chưa lưu) và JSON mẫu dạng chuỗi. Không ghi dữ liệu. Cấu hình sai cú pháp
+        thì 400 `VALIDATION_FAILED`. JSON mẫu hỏng thì 200 với `sampleJsonValid` bằng false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionIdPath, statusPath, timestampFormat, sampleJson]
+              properties:
+                transactionIdPath: {type: string}
+                statusPath: {type: string}
+                timestampPath: {type: string, nullable: true}
+                timestampFormat: {type: string, enum: [ISO_8601, UNIX_SECONDS, UNIX_MILLIS, PATTERN]}
+                timestampPattern: {type: string, nullable: true}
+                defaultTimeZone: {type: string, default: Asia/Ho_Chi_Minh}
+                sampleJson: {type: string, maxLength: 1048576, description: JSON mẫu dưới dạng chuỗi, tối đa 1 MiB}
+      responses:
+        "200":
+          description: Kết quả thử
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sampleJsonValid]
+                properties:
+                  sampleJsonValid: {type: boolean}
+                  sampleJsonError: {type: string, nullable: true}
+                  transactionId: {$ref: "#/components/schemas/FieldResult"}
+                  status: {$ref: "#/components/schemas/FieldResult"}
+                  timestamp: {$ref: "#/components/schemas/FieldResult"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "415":
+          description: Content-Type của yêu cầu không phải JSON (UNSUPPORTED_MEDIA_TYPE)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/transactions:
+    get:
+      tags: [Query]
+      operationId: listTransactions
+      x-unit: U2
+      summary: Danh sách giao dịch
+      description: |
+        Sắp `latestReceivedAt` mới nhất trước, hòa nhau theo `latestCallbackId` lớn hơn. `receivedFrom` và
+        `receivedTo` lọc theo `latestReceivedAt`, tính cả hai đầu; dấu `+` của múi giờ phải mã hóa thành `%2B`.
+      parameters:
+        - {name: serviceCode, in: query, schema: {type: string}, description: "Khớp không phân biệt hoa thường"}
+        - {name: transactionId, in: query, schema: {type: string}, description: "Khớp chuỗi chứa, không phân biệt hoa thường"}
+        - {name: status, in: query, schema: {type: string}, description: "Khớp chuỗi chứa, không phân biệt hoa thường"}
+        - {name: receivedFrom, in: query, schema: {type: string, format: date-time}, description: "ISO 8601 có múi giờ"}
+        - {name: receivedTo, in: query, schema: {type: string, format: date-time}, description: "ISO 8601 có múi giờ"}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: size, in: query, schema: {type: integer, enum: [20, 50, 100], default: 20}}
+      responses:
+        "200":
+          description: Một trang giao dịch
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page, size, totalItems, totalPages]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/TransactionSummary"}
+                  page: {type: integer}
+                  size: {type: integer}
+                  totalItems: {type: integer, format: int64}
+                  totalPages: {type: integer}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/transactions/detail:
+    get:
+      tags: [Query]
+      operationId: getTransaction
+      x-unit: U1
+      summary: Chi tiết giao dịch và lịch sử callback
+      description: |
+        `transactionId` là chuỗi tùy ý của ngân hàng, có thể chứa `/`, `?`, `#`, `%` hoặc khoảng trắng, nên cả hai
+        tham số phải mã hóa phần trăm. Ví dụ:
+        `curl -G "http://127.0.0.1:8080/api/transactions/detail" --data-urlencode "serviceCode=THU_HO" --data-urlencode "transactionId=2026/10/001"`.
+        Phản hồi không đặt trần số lần nhận; mỗi lần nhận có thể chứa tới 1 MiB payload.
+      parameters:
+        - {name: serviceCode, in: query, required: true, schema: {type: string}, description: "Khớp không phân biệt hoa thường; mã hóa phần trăm"}
+        - {name: transactionId, in: query, required: true, schema: {type: string}, description: "Khớp chính xác, phân biệt hoa thường; mã hóa phần trăm"}
+      responses:
+        "200":
+          description: Giao dịch kèm lịch sử callback theo thứ tự nhận (cũ nhất trước)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transaction, callbacks]
+                properties:
+                  transaction: {$ref: "#/components/schemas/TransactionSummary"}
+                  callbacks:
+                    type: array
+                    items: {$ref: "#/components/schemas/CallbackDetail"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "404":
+          description: Không có giao dịch (TRANSACTION_NOT_FOUND)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/callbacks:
+    get:
+      tags: [Query]
+      operationId: listCallbacks
+      x-unit: U2
+      summary: Danh sách callback
+      description: |
+        Sắp `receivedAt` mới nhất trước, hòa nhau theo `recordId` lớn hơn. `serviceCode` khớp không phân biệt hoa
+        thường; `transactionId` và `status` khớp chuỗi chứa, không phân biệt hoa thường; `receivedFrom` và
+        `receivedTo` là thời điểm ISO 8601 có múi giờ (dấu `+` phải mã hóa thành `%2B`), tính cả hai đầu.
+      parameters:
+        - {name: serviceCode, in: query, schema: {type: string}}
+        - {name: transactionId, in: query, schema: {type: string}}
+        - {name: outcome, in: query, schema: {type: string, enum: [SUCCESS, MAPPING_ERROR, REJECTED]}}
+        - {name: rejectionReason, in: query, schema: {$ref: "#/components/schemas/RejectionReason"}, description: "Giá trị ngoài danh sách trả 400 VALIDATION_FAILED"}
+        - {name: receivedFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: receivedTo, in: query, schema: {type: string, format: date-time}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: size, in: query, schema: {type: integer, enum: [20, 50, 100], default: 20}}
+      responses:
+        "200":
+          description: Một trang callback
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page, size, totalItems, totalPages]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/CallbackSummary"}
+                  page: {type: integer}
+                  size: {type: integer}
+                  totalItems: {type: integer, format: int64}
+                  totalPages: {type: integer}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /api/callbacks/{recordId}:
+    get:
+      tags: [Query]
+      operationId: getCallback
+      x-unit: U2
+      summary: Chi tiết một lần nhận
+      parameters:
+        - {name: recordId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: Chi tiết một lần nhận
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CallbackDetail"}
+        "400": {$ref: "#/components/responses/ValidationFailed"}
+        "404":
+          description: Không có lần nhận (CALLBACK_NOT_FOUND)
+          headers:
+            X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "500": {$ref: "#/components/responses/InternalError"}
+  /actuator/health:
+    get:
+      tags: [Operations]
+      operationId: health
+      x-unit: U1
+      summary: Điểm kiểm tra sức khỏe
+      description: Chỉ endpoint Actuator này được mở và không hiện chi tiết; mọi endpoint Actuator khác trả 404 NOT_FOUND.
+      responses:
+        "200":
+          description: Ứng dụng chạy và kết nối được cơ sở dữ liệu
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [UP]}
+        "503":
+          description: Không kết nối được cơ sở dữ liệu
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [DOWN]}
+components:
+  headers:
+    XSimulatorError:
+      description: Mã lỗi do ứng dụng sinh ra, bằng trường `error` của thân. Response đã cấu hình không có header này.
+      schema: {type: string}
+    XSimulatorRecordFailed:
+      description: |
+        Chỉ có trên response lỗi của đường nhận callback khi lần nhận bị từ chối mà việc ghi bản ghi từ chối cũng
+        thất bại (giá trị luôn là `true`). Không có trên response đã cấu hình và không có khi ghi thành công.
+      schema: {type: string, enum: ["true"]}
+  responses:
+    ValidationFailed:
+      description: Dữ liệu hoặc tham số không hợp lệ (VALIDATION_FAILED kèm fieldErrors)
+      headers:
+        X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    CallbackBadRequest:
+      description: |
+        Content-Type không phải JSON (UNSUPPORTED_CONTENT_TYPE) hoặc JSON hỏng/rỗng (INVALID_JSON). Body có byte
+        UTF-8 sai cũng là INVALID_JSON; khi bị từ chối, body được lưu ở `payloadRawText` với ký tự thay thế U+FFFD.
+      headers:
+        X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+        X-Simulator-Record-Failed: {$ref: "#/components/headers/XSimulatorRecordFailed"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    ServiceNotFound:
+      description: Không có dịch vụ với mã này, hoặc đã xóa (SERVICE_NOT_FOUND)
+      headers:
+        X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    InternalError:
+      description: Lỗi nội bộ, ví dụ cơ sở dữ liệu không ghi được (INTERNAL_ERROR); thông báo chung, không lộ chi tiết
+      headers:
+        X-Simulator-Error: {$ref: "#/components/headers/XSimulatorError"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Mã lỗi viết hoa, ổn định (xem bảng mã lỗi ở mô tả)
+        message:
+          type: string
+          description: Mô tả ngắn cho người đọc, dựng từ mẫu cố định; không chứa khóa API, đầu vào thô hay dữ liệu nhạy cảm
+        fieldErrors:
+          type: array
+          description: Chỉ có khi error là VALIDATION_FAILED
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: {type: string}
+              message: {type: string}
+    FieldResult:
+      type: object
+      properties:
+        value: {type: string, nullable: true, description: "Giá trị lấy được; timestamp là ISO 8601 UTC"}
+        errorCode:
+          type: string
+          nullable: true
+          enum: [NOT_FOUND, EMPTY, WRONG_TYPE, TOO_LONG, PAYLOAD_NOT_OBJECT, UNPARSEABLE, null]
+          description: "Mã lỗi ổn định của đúng trường này; null nếu không lỗi"
+        error: {type: string, nullable: true, description: "Câu mô tả lỗi cho người đọc; null nếu không lỗi"}
+        warning: {type: string, nullable: true, description: "Chỉ dùng cho timestamp đã cấu hình đường dẫn mà không có giá trị"}
+    ServiceConfig:
+      type: object
+      description: |
+        Cấu hình dùng chung cho yêu cầu và phản hồi. Không chứa apiKeySecret: khóa chỉ có ở ServiceCreate và
+        ServiceUpdate, không bao giờ có ở Service.
+      required: [name, authType, transactionIdPath, statusPath, timestampFormat, responseHttpStatus, responseBody]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        description: {type: string, maxLength: 500, nullable: true}
+        authType: {type: string, enum: [NONE, API_KEY]}
+        apiKeyHeaderName:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: |
+            Bắt buộc khi authType là API_KEY: tên header HTTP hợp lệ dài 1 đến 100 ký tự, không trùng header dành
+            riêng của giao thức. Với NONE bị bỏ qua và không lưu.
+        transactionIdPath: {type: string, maxLength: 200, example: "$.transId", description: "Dạng $. rồi 1 đến 10 đoạn nối bằng dấu chấm; mỗi đoạn gồm chữ cái ASCII, chữ số, gạch dưới, gạch ngang. Chỉ đi qua object lồng nhau, không wildcard hay chỉ số mảng"}
+        statusPath: {type: string, maxLength: 200, example: "$.code"}
+        timestampPath: {type: string, maxLength: 200, nullable: true, example: "$.time", description: "Vắng hoặc rỗng nghĩa là không đọc timestamp"}
+        timestampFormat: {type: string, enum: [ISO_8601, UNIX_SECONDS, UNIX_MILLIS, PATTERN]}
+        timestampPattern:
+          type: string
+          maxLength: 100
+          nullable: true
+          example: "yyyy-MM-dd HH:mm:ss"
+          description: |
+            Chỉ có nghĩa khi timestampFormat là PATTERN (bắt buộc khi đó): mẫu ngày giờ Java hợp lệ, có đủ năm,
+            tháng, ngày, giờ và phút. Với định dạng khác, giá trị gửi lên bị bỏ và không lưu.
+        defaultTimeZone: {type: string, default: Asia/Ho_Chi_Minh, description: "Mã múi giờ Java hợp lệ; dùng cho ngày giờ ISO không có múi giờ"}
+        responseHttpStatus: {type: integer, minimum: 200, maximum: 599, description: "Không nhận 204, 205, 304 vì HTTP không cho phép body; các mã này trả 400 VALIDATION_FAILED"}
+        responseBody: {description: "JSON hợp lệ bất kỳ, tối đa 64 KB, ví dụ {\"ok\":true}"}
+    ServiceCreate:
+      allOf:
+        - $ref: "#/components/schemas/ServiceConfig"
+        - type: object
+          required: [serviceCode]
+          properties:
+            serviceCode: {type: string, minLength: 1, maxLength: 50, pattern: "^[A-Za-z0-9_-]+$"}
+            enabled: {type: boolean, default: true}
+            apiKeySecret:
+              type: string
+              writeOnly: true
+              minLength: 1
+              maxLength: 256
+              description: Chỉ ghi. Bắt buộc khi tạo với API_KEY; 1 đến 256 ký tự ASCII in được, không có khoảng trắng ở đầu hoặc cuối. Với NONE bị bỏ qua và không lưu
+    ServiceUpdate:
+      allOf:
+        - $ref: "#/components/schemas/ServiceConfig"
+        - type: object
+          properties:
+            apiKeySecret:
+              type: string
+              writeOnly: true
+              maxLength: 256
+              description: Chỉ ghi, cùng quy tắc với ServiceCreate. Vắng hoặc rỗng nghĩa là giữ khóa cũ; đổi authType sang API_KEY mà không có khóa thì 400 VALIDATION_FAILED
+    Service:
+      allOf:
+        - $ref: "#/components/schemas/ServiceConfig"
+        - type: object
+          required: [serviceCode, enabled, deleted, apiKeyConfigured, callbackPath, currentVersionNumber, createdAt, updatedAt]
+          properties:
+            serviceCode: {type: string}
+            enabled: {type: boolean}
+            deleted: {type: boolean}
+            apiKeyConfigured: {type: boolean}
+            callbackPath: {type: string, example: "/callbacks/THU_HO"}
+            currentVersionNumber: {type: integer, minimum: 1}
+            createdAt: {type: string, format: date-time}
+            updatedAt: {type: string, format: date-time}
+    RejectionReason:
+      type: string
+      nullable: true
+      enum: [INVALID_API_KEY, MISSING_API_KEY, INVALID_JSON, UNSUPPORTED_CONTENT_TYPE, SERVICE_DISABLED, SERVICE_DELETED, null]
+      description: "null khi lần nhận không bị từ chối"
+    TransactionSummary:
+      type: object
+      required: [serviceCode, transactionId, callbackCount, latestReceivedAt, latestHasMappingError]
+      properties:
+        serviceCode: {type: string}
+        serviceDeleted: {type: boolean}
+        transactionId: {type: string}
+        latestStatus: {type: string, nullable: true, description: "null khi callback gần nhất thiếu hoặc lỗi status"}
+        latestBusinessTimestamp: {type: string, format: date-time, nullable: true}
+        latestReceivedAt: {type: string, format: date-time}
+        latestCallbackId: {type: integer, format: int64}
+        latestHasMappingError: {type: boolean}
+        callbackCount: {type: integer, minimum: 1}
+    CallbackSummary:
+      type: object
+      required: [recordId, serviceCode, receivedAt, outcome, httpStatusReturned]
+      properties:
+        recordId: {type: integer, format: int64}
+        serviceCode: {type: string}
+        serviceDeleted: {type: boolean}
+        receivedAt: {type: string, format: date-time}
+        outcome: {type: string, enum: [SUCCESS, MAPPING_ERROR, REJECTED]}
+        rejectionReason: {$ref: "#/components/schemas/RejectionReason"}
+        httpStatusReturned: {type: integer}
+        transactionId: {type: string, nullable: true}
+        status: {type: string, nullable: true}
+        businessTimestamp: {type: string, format: date-time, nullable: true}
+    CallbackDetail:
+      allOf:
+        - $ref: "#/components/schemas/CallbackSummary"
+        - type: object
+          properties:
+            configVersionNumber: {type: integer, nullable: true, description: "Số phiên bản cấu hình đã dùng"}
+            requestHeaders:
+              type: object
+              additionalProperties: {type: string}
+              description: "Header đã che: Authorization, Proxy-Authorization, Cookie và header API key của dịch vụ hiện ***"
+            payloadJson: {description: "Payload JSON; là dạng đã chuẩn hóa của jsonb (số như 1e3 có thể hiện thành 1000, thứ tự khóa và khóa trùng không được giữ). Lần nhận bị từ chối cũng có trường này khi body là JSON hợp lệ (kể cả JSON null)"}
+            payloadRawText: {type: string, description: "Body văn bản gốc khi không phải JSON hợp lệ (byte UTF-8 sai thành U+FFFD). Mỗi lần nhận có đúng một trong payloadJson hoặc payloadRawText; vắng payloadRawText nghĩa là payload nằm ở payloadJson, kể cả JSON null"}
+            mappingFieldResults:
+              type: object
+              description: "Rỗng ({}) với lần nhận bị từ chối vì chưa chạy mapping"
+              properties:
+                transactionId: {$ref: "#/components/schemas/FieldResult"}
+                status: {$ref: "#/components/schemas/FieldResult"}
+                timestamp: {$ref: "#/components/schemas/FieldResult"}
+            responseStatusReturned: {type: integer, nullable: true}
+            responseBodyReturned: {description: "Body đã trả; vắng khi lỗi ghi"}

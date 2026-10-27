@@ -1,0 +1,14 @@
+{
+  "serviceCode": "THU_HO",
+  "name": "Thu hộ",
+  "description": "Dịch vụ mẫu: không xác thực, thời gian ISO 8601",
+  "enabled": true,
+  "authType": "NONE",
+  "transactionIdPath": "$.transId",
+  "statusPath": "$.code",
+  "timestampPath": "$.time",
+  "timestampFormat": "ISO_8601",
+  "defaultTimeZone": "Asia/Ho_Chi_Minh",
+  "responseHttpStatus": 200,
+  "responseBody": { "code": "00" }
+}
